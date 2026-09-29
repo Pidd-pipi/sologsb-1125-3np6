@@ -19,6 +19,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import EmptyState from '../components/common/EmptyState';
 import ClassificationBadge from '../components/common/Badge';
 import { useSampleFilter } from '../hooks/useSampleFilter';
+import { useClassificationMap } from '../hooks/useClassification';
 import { useSampleStore } from '../stores/sampleStore';
 import { useToastStore } from '../stores/uiStore';
 import {
@@ -39,6 +40,7 @@ export default function Sections() {
   const updateSection = useSampleStore((s) => s.updateSection);
   const notify = useToastStore((s) => s.notify);
   const { results } = useSampleFilter();
+  const classificationMap = useClassificationMap();
 
   const [thicknessMin, setThicknessMin] = useState<number | null>(null);
   const [thicknessMax, setThicknessMax] = useState<number | null>(null);
@@ -152,6 +154,7 @@ export default function Sections() {
         <Grid container spacing={2}>
           {filtered.map((s) => {
             const sample = sampleMap.get(s.sampleId);
+            const cls = sample ? classificationMap.get(sample.id) : undefined;
             const sum = mineralTotal(s.minerals);
             return (
               <Grid item xs={12} sm={6} md={4} key={s.id}>
@@ -181,8 +184,8 @@ export default function Sections() {
                           {sample.sampleNo} ↗
                         </Typography>
                         <ClassificationBadge
-                          category={sample.category}
-                          group={sample.chemicalGroup}
+                          category={cls?.effectiveCategory ?? sample.category}
+                          group={cls?.effectiveGroup ?? sample.chemicalGroup}
                         />
                       </Stack>
                     ) : (

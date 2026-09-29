@@ -1,17 +1,22 @@
 import { Box, Card, CardActionArea, CardContent, Chip, Stack, Typography } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import {
+  CATEGORY_LABELS,
   FALL_OR_FIND_LABELS,
   WEATHERING_LABELS,
   type MeteoriteSample,
 } from '../../types/sample';
 import type { FindRecord } from '../../types/find';
-import { formatWeight } from '../../utils/format';
+import { formatWeight, categoryColor } from '../../utils/format';
 import { formatCoordinate } from '../../utils/geo';
 import { ClassificationBadge } from './Badge';
+import { ReviewStatusChip } from './ReviewStatusChip';
+import type { SampleClassification } from '../../utils/classify';
 
 interface SampleCardProps {
   sample: MeteoriteSample;
+  /** 由 useClassificationMap 汇总出的分类复核结论；缺省时退回登记初判 */
+  classification?: SampleClassification;
   find?: FindRecord;
   sectionCount?: number;
   analysisCount?: number;
@@ -21,6 +26,7 @@ interface SampleCardProps {
 /** 样本摘要卡片：被 / 与 /samples/:id 消费 */
 export function SampleCard({
   sample,
+  classification,
   find,
   sectionCount = 0,
   analysisCount = 0,
@@ -29,6 +35,11 @@ export function SampleCard({
   const missing: string[] = [];
   if (!find) missing.push('缺坐标');
   if (sectionCount === 0) missing.push('缺切片');
+
+  const status = classification?.status ?? 'unanalyzed';
+  const isPending = status === 'pending';
+  const effectiveCategory = classification?.effectiveCategory ?? sample.category;
+  const effectiveGroup = classification?.effectiveGroup ?? sample.chemicalGroup;
 
   return (
     <Card
@@ -62,7 +73,32 @@ export function SampleCard({
             </Typography>
           </Stack>
 
-          <ClassificationBadge category={sample.category} group={sample.chemicalGroup} />
+          <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+            <ClassificationBadge category={effectiveCategory} group={effectiveGroup} />
+            <ReviewStatusChip status={status} disagreement={classification?.disagreement} />
+          </Stack>
+
+          {isPending ? (
+            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+              <Typography variant="caption" color="text.secondary">
+                {classification?.disagreement ? '检测建议分歧：' : '检测建议：'}
+              </Typography>
+              {classification?.advice.map((t) => (
+                <Chip
+                  key={t.category}
+                  size="small"
+                  label={`${CATEGORY_LABELS[t.category]} ×${t.count}`}
+                  sx={{
+                    height: 18,
+                    fontSize: 11,
+                    bgcolor: `${categoryColor(t.category)}22`,
+                    color: categoryColor(t.category),
+                    '& .MuiChip-label': { px: 0.75 },
+                  }}
+                />
+              ))}
+            </Stack>
+          ) : null}
 
           <Typography variant="body2" color="text.secondary">
             {FALL_OR_FIND_LABELS[sample.fallOrFind]} · {WEATHERING_LABELS[sample.weathering]}

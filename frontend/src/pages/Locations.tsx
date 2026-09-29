@@ -15,6 +15,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import EmptyState from '../components/common/EmptyState';
 import ClassificationBadge from '../components/common/Badge';
 import { useRegionStats } from '../hooks/useRegionStats';
+import { useClassificationMap } from '../hooks/useClassification';
 import { useSampleStore } from '../stores/sampleStore';
 import { CATEGORY_LABELS, type SampleCategory } from '../types/sample';
 import { categoryColor, formatWeight } from '../utils/format';
@@ -29,6 +30,7 @@ export default function Locations() {
   const { stats, totalSamples, totalWeight } = useRegionStats();
   const finds = useSampleStore((s) => s.finds);
   const samples = useSampleStore((s) => s.samples);
+  const classificationMap = useClassificationMap();
   const [activeRegion, setActiveRegion] = useState<string | null>(null);
   const [activePoint, setActivePoint] = useState<string | null>(null);
 
@@ -38,10 +40,11 @@ export default function Locations() {
     const list = finds.filter((f) => (activeRegion ? f.region === activeRegion : true));
     return list.map((f) => {
       const sample = sampleMap.get(f.sampleId);
+      const cls = sample ? classificationMap.get(sample.id) : undefined;
       const pos = projectToGrid({ longitude: f.longitude, latitude: f.latitude }, SIZE);
-      return { find: f, sample, pos };
+      return { find: f, sample, pos, effectiveCategory: cls?.effectiveCategory ?? null };
     });
-  }, [finds, sampleMap, activeRegion]);
+  }, [finds, sampleMap, activeRegion, classificationMap]);
 
   const activeFind = points.find((p) => p.find.id === activePoint);
 
@@ -97,6 +100,7 @@ export default function Locations() {
                     sx={{ bgcolor: categoryColor(c), color: '#fff' }}
                   />
                 ))}
+                <Chip size="small" label="待复核 / 待确认" sx={{ bgcolor: '#bdbdbd', color: '#fff' }} />
               </Stack>
 
               <Box
@@ -126,7 +130,11 @@ export default function Locations() {
                   <line x1={0} y1={SIZE / 2} x2={SIZE} y2={SIZE / 2} stroke="#cbbfa4" strokeWidth="0.45" />
                   <line x1={SIZE / 2} y1={0} x2={SIZE / 2} y2={SIZE} stroke="#cbbfa4" strokeWidth="0.45" />
                   {points.map((p) => {
-                    const color = p.sample ? categoryColor(p.sample.category) : '#9e9e9e';
+                    const color = p.sample
+                      ? p.effectiveCategory === null
+                        ? '#bdbdbd'
+                        : categoryColor(p.effectiveCategory)
+                      : '#9e9e9e';
                     const active = p.find.id === activePoint;
                     return (
                       <g key={p.find.id} onClick={() => setActivePoint(p.find.id)} style={{ cursor: 'pointer' }}>
@@ -178,8 +186,12 @@ export default function Locations() {
                           {activeFind.sample.sampleNo} ↗
                         </Typography>
                         <ClassificationBadge
-                          category={activeFind.sample.category}
-                          group={activeFind.sample.chemicalGroup}
+                          category={activeFind.effectiveCategory}
+                          group={
+                            activeFind.effectiveCategory === null
+                              ? null
+                              : classificationMap.get(activeFind.sample.id)?.effectiveGroup ?? null
+                          }
                         />
                       </>
                     ) : (

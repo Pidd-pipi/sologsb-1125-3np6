@@ -33,7 +33,7 @@ import {
   type AnalysisMethod,
   type AnalysisTarget,
 } from '../types/analysis';
-import { classifyByAnalysis, evaluateThresholds } from '../utils/classify';
+import { classifyByAnalysis, evaluateThresholds, getAnalysisEvaluation } from '../utils/classify';
 import { formatDate } from '../utils/format';
 
 interface AnalysisDraft {
@@ -93,7 +93,7 @@ export default function Analysis() {
       return;
     }
     setError(null);
-    await addAnalysis({
+    const result = await addAnalysis({
       sampleId: value.sampleId,
       sectionId: value.target === 'section' ? value.sectionId : undefined,
       target: value.target,
@@ -105,7 +105,11 @@ export default function Analysis() {
       testedAt: value.testedAt,
     });
     clear();
-    notify('检测记录已写入本地库');
+    if (result.invalidatedDecision) {
+      notify('检测记录已写入；其建议与该样本已确认分类不一致，样本已重新进入待复核（旧判断已归档）', 'warning');
+    } else {
+      notify('检测记录已写入本地库');
+    }
     patch({ fa: 18.5, fs: 16, ni: 0.8, kamaciteBandwidth: 0.05 });
   };
 
@@ -349,7 +353,7 @@ export default function Analysis() {
           <Stack spacing={1}>
             {analysis.slice(0, 12).map((a) => {
               const s = samples.find((x) => x.id === a.sampleId);
-              const ev = classifyByAnalysis(a);
+              const ev = getAnalysisEvaluation(a);
               return (
                 <Box
                   key={a.id}
@@ -360,11 +364,11 @@ export default function Analysis() {
                       {s ? s.sampleNo : '未知样本'} · {ANALYSIS_METHOD_LABELS[a.method]} ·{' '}
                       {formatDate(a.testedAt)}
                     </Typography>
-                    <ClassificationBadge category={ev.category} showGroup={false} />
+                    <ClassificationBadge category={ev.advice.category} showGroup={false} />
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
                     Fa {a.fa} mol% · Fs {a.fs} mol% · Ni {a.ni} wt% · 带宽 {a.kamaciteBandwidth} mm ——{' '}
-                    {ev.summary}
+                    {ev.advice.summary}
                   </Typography>
                 </Box>
               );

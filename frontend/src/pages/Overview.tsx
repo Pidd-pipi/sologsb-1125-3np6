@@ -17,6 +17,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import SampleCard from '../components/common/SampleCard';
 import EmptyState from '../components/common/EmptyState';
 import { useSampleFilter } from '../hooks/useSampleFilter';
+import { useClassificationMap } from '../hooks/useClassification';
 import { useSampleStore } from '../stores/sampleStore';
 import { useUiStore } from '../stores/uiStore';
 import {
@@ -29,11 +30,12 @@ import { formatWeight } from '../utils/format';
 
 /** `/` 样本总览 */
 export default function Overview() {
-  const { results, total, activeCount } = useSampleFilter();
+  const { results, total, activeCount, pendingCount } = useSampleFilter();
   const samples = useSampleStore((s) => s.samples);
   const finds = useSampleStore((s) => s.finds);
   const sections = useSampleStore((s) => s.sections);
   const analysis = useSampleStore((s) => s.analysis);
+  const classificationMap = useClassificationMap();
 
   const ui = useUiStore();
 
@@ -58,6 +60,7 @@ export default function Overview() {
           <Typography variant="h4">样本总览</Typography>
           <Typography variant="body2" color="text.secondary">
             共 {total} 份样本，当前筛选命中 {results.length} 份，合计 {formatWeight(totalWeight)}
+            {pendingCount > 0 ? `；${pendingCount} 份分类待复核/待确认，不计入具体分类` : ''}
           </Typography>
         </Box>
         <Button component={RouterLink} to="/samples/new" variant="contained" startIcon={<AddIcon />}>
@@ -75,6 +78,19 @@ export default function Overview() {
         }}
       >
         <Stack spacing={2}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="subtitle2" sx={{ width: 72 }}>
+              复核状态
+            </Typography>
+            <Chip
+              key="pending"
+              label={`待复核 / 待确认（${pendingCount}）`}
+              color="warning"
+              variant={ui.pendingOnly ? 'filled' : 'outlined'}
+              onClick={() => ui.setPendingOnly(!ui.pendingOnly)}
+            />
+          </Stack>
+
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
             <Typography variant="subtitle2" sx={{ width: 72 }}>
               分类
@@ -191,6 +207,7 @@ export default function Overview() {
             <Grid item xs={12} sm={6} md={4} lg={3} key={s.id}>
               <SampleCard
                 sample={s}
+                classification={classificationMap.get(s.id)}
                 find={findBySample.get(s.id)}
                 sectionCount={sectionCount.get(s.id) ?? 0}
                 analysisCount={analysisCount.get(s.id) ?? 0}

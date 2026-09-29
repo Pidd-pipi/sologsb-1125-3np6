@@ -2,8 +2,16 @@ import { create } from 'zustand';
 import { db, makeId, seedIfEmpty } from '../db';
 import type { AnalysisRecord } from '../types/analysis';
 import type { FindRecord } from '../types/find';
-import type { MeteoriteSample } from '../types/sample';
+import type { ChemicalGroup, ClassificationDecision, MeteoriteSample, SampleCategory } from '../types/sample';
 import type { ThinSection } from '../types/section';
+import { activeDecisionOf, decisionConflictsWith, snapshotEvaluation } from '../utils/classify';
+
+export interface AddAnalysisResult {
+  id: string;
+  /** 该检测的建议分类是否与样本当前生效核定冲突，导致旧核定失效重核 */
+  invalidatedDecision: boolean;
+  supersededDecision?: ClassificationDecision;
+}
 
 export interface SampleState {
   samples: MeteoriteSample[];
@@ -19,7 +27,11 @@ export interface SampleState {
   addFind: (input: Omit<FindRecord, 'id' | 'createdAt'>) => Promise<string>;
   addSection: (input: Omit<ThinSection, 'id' | 'createdAt'>) => Promise<string>;
   updateSection: (id: string, patch: Partial<ThinSection>) => Promise<void>;
-  addAnalysis: (input: Omit<AnalysisRecord, 'id' | 'createdAt'>) => Promise<string>;
+  addAnalysis: (input: Omit<AnalysisRecord, 'id' | 'createdAt' | 'evaluation'>) => Promise<AddAnalysisResult>;
+  confirmClassification: (
+    sampleId: string,
+    input: { category: SampleCategory; chemicalGroup: ChemicalGroup; reason: string },
+  ) => Promise<void>;
   nextSampleSeq: () => number;
 }
 
@@ -98,10 +110,72 @@ export const useSampleStore = create<SampleState>((set, get) => ({
   },
 
   addAnalysis: async (input) => {
-    const record: AnalysisRecord = { ...input, id: makeId('analysis'), createdAt: Date.now() };
-    await db.analysis.add(record);
-    set({ analysis: [record, ...get().analysis] });
-    return record.id;
+    const now = Date.now();
+    const evaluation = snapshotEvaluation(input);
+    const record: AnalysisRecord = { ...input, id: makeId('analysis'), evaluation, createdAt: now };
+
+    // 新检测的建议分类若与生效核定不一致，则旧核定自动失效，样本回到待复核；
+    // 旧判断与其依据完整保留在 classificationDecisions 历史中。
+    let updatedSample: MeteoriteSample | undefined;
+    let supersededDecision: ClassificationDecision | undefined;
+    await db.transaction('rw', db.analysis, db.samples, async () => {
+      await db.analysis.add(record);
+      const existing = get().samples.find((s) => s.id === input.sampleId);
+      const active = existing ? activeDecisionOf(existing) : undefined;
+      if (active && decisionConflictsWith(active, evaluation)) {
+        const marked: ClassificationDecision = {
+          ...active,
+          status: 'superseded',
+          supersededAt: now,
+          supersedeReason: 'new-analysis',
+          supersedeAnalysisId: record.id,
+        };
+        const decisions = [...(existing!.classificationDecisions ?? [])];
+        const idx = decisions.findIndex((d) => d.id === active.id);
+        if (idx >= 0) decisions[idx] = marked;
+        updatedSample = { ...existing!, classificationDecisions: decisions, updatedAt: now };
+        await db.samples.update(input.sampleId, { classificationDecisions: decisions, updatedAt: now });
+        supersededDecision = marked;
+      }
+    });
+
+    set((state) => ({
+      analysis: [record, ...state.analysis],
+      samples: updatedSample
+        ? state.samples.map((s) => (s.id === updatedSample!.id ? updatedSample! : s))
+        : state.samples,
+    }));
+    return { id: record.id, invalidatedDecision: !!supersededDecision, supersededDecision };
+  },
+
+  confirmClassification: async (sampleId, input) => {
+    const now = Date.now();
+    const existing = get().samples.find((s) => s.id === sampleId);
+    if (!existing) return;
+    const basedOnAnalysisIds = get()
+      .analysis.filter((a) => a.sampleId === sampleId)
+      .map((a) => a.id);
+    const prev = activeDecisionOf(existing);
+    const decision: ClassificationDecision = {
+      id: makeId('decision'),
+      decidedAt: now,
+      category: input.category,
+      chemicalGroup: input.chemicalGroup,
+      reason: input.reason,
+      basedOnAnalysisIds,
+      status: 'active',
+      ...(prev ? { prevDecisionId: prev.id } : {}),
+    };
+    const history = [...(existing.classificationDecisions ?? [])];
+    if (prev) {
+      const idx = history.findIndex((d) => d.id === prev.id);
+      history[idx] = { ...prev, status: 'superseded' as const, supersededAt: now, supersedeReason: 'curator-revision' as const };
+    }
+    history.push(decision);
+
+    const updated: MeteoriteSample = { ...existing, classificationDecisions: history, updatedAt: now };
+    await db.samples.update(sampleId, { classificationDecisions: history, updatedAt: now });
+    set({ samples: get().samples.map((s) => (s.id === sampleId ? updated : s)) });
   },
 
   nextSampleSeq: () => {

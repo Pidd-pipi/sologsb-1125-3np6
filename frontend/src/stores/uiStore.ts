@@ -5,12 +5,15 @@ export type SortKey = 'createdAt' | 'totalWeight' | 'sampleNo';
 export interface SampleFilterState {
   categories: string[];
   groups: string[];
+  /** 只看待复核（有检测但尚未核定生效）的样本 */
+  pendingOnly: boolean;
   minWeight: number | null;
   maxWeight: number | null;
   keyword: string;
   sort: SortKey;
   setCategories: (v: string[]) => void;
   setGroups: (v: string[]) => void;
+  setPendingOnly: (v: boolean) => void;
   setWeightRange: (min: number | null, max: number | null) => void;
   setKeyword: (v: string) => void;
   setSort: (v: SortKey) => void;
@@ -20,6 +23,7 @@ export interface SampleFilterState {
 const initial = {
   categories: [] as string[],
   groups: [] as string[],
+  pendingOnly: false,
   minWeight: null as number | null,
   maxWeight: null as number | null,
   keyword: '',
@@ -31,6 +35,7 @@ export const useUiStore = create<SampleFilterState>((set) => ({
   ...initial,
   setCategories: (v) => set({ categories: v }),
   setGroups: (v) => set({ groups: v }),
+  setPendingOnly: (v) => set({ pendingOnly: v }),
   setWeightRange: (min, max) => set({ minWeight: min, maxWeight: max }),
   setKeyword: (v) => set({ keyword: v }),
   setSort: (v) => set({ sort: v }),

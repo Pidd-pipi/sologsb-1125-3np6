@@ -25,7 +25,19 @@ export interface AnalysisRecord {
   kamaciteBandwidth: number;
   /** 检测日期 YYYY-MM-DD */
   testedAt: string;
+  /**
+   * 录入时固化的分类建议与逐项阈值命中（v4）。
+   * 每条检测保留自己的命中快照，分类规则日后调整也不影响历史依据；
+   * 缺省的旧记录读取时按当前规则即时回算。
+   */
+  evaluation?: StoredAnalysisEvaluation;
   createdAt: number;
+}
+
+/** 检测记录固化的评估快照 */
+export interface StoredAnalysisEvaluation {
+  advice: ClassificationAdvice;
+  thresholdHits: ThresholdHit[];
 }
 
 export const ANALYSIS_METHOD_LABELS: Record<AnalysisMethod, string> = {

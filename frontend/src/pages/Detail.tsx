@@ -21,9 +21,12 @@ import { Link as RouterLink, useParams } from 'react-router-dom';
 import SampleCard from '../components/common/SampleCard';
 import FieldGroup from '../components/common/FieldGroup';
 import ClassificationBadge from '../components/common/Badge';
+import ReviewStatusChip from '../components/common/ReviewStatusChip';
+import ClassificationReviewPanel from '../components/common/ClassificationReviewPanel';
 import EmptyState from '../components/common/EmptyState';
 import { useSampleStore } from '../stores/sampleStore';
 import { useToastStore } from '../stores/uiStore';
+import { useSampleClassification } from '../hooks/useClassification';
 import {
   ANALYSIS_METHODS,
   ANALYSIS_METHOD_LABELS,
@@ -48,7 +51,7 @@ import {
   WEATHERING_LABELS,
 } from '../types/sample';
 import { FIND_ENVIRONMENT_LABELS, COORDINATE_SOURCE_LABELS } from '../types/find';
-import { classifyByAnalysis, evaluateThresholds } from '../utils/classify';
+import { classifyByAnalysis, evaluateThresholds, getAnalysisEvaluation } from '../utils/classify';
 import { formatDate, formatNumber, formatWeight } from '../utils/format';
 import { formatCoordinate } from '../utils/geo';
 
@@ -68,6 +71,7 @@ export default function Detail() {
   const find = useMemo(() => finds.find((f) => f.sampleId === id), [finds, id]);
   const mySections = useMemo(() => sections.filter((s) => s.sampleId === id), [sections, id]);
   const myAnalysis = useMemo(() => analysis.filter((a) => a.sampleId === id), [analysis, id]);
+  const classification = useSampleClassification(sample);
 
   const [sectionDraft, setSectionDraft] = useState({
     sectionNo: '',
@@ -119,7 +123,7 @@ export default function Detail() {
   };
 
   const submitAnalysis = async () => {
-    await addAnalysis({
+    const result = await addAnalysis({
       sampleId: sample.id,
       target: 'sample',
       method: analysisDraft.method,
@@ -129,7 +133,11 @@ export default function Detail() {
       kamaciteBandwidth: Number(analysisDraft.kamaciteBandwidth),
       testedAt: analysisDraft.testedAt,
     });
-    notify(`已为 ${sample.sampleNo} 写入一条检测记录`);
+    if (result.invalidatedDecision) {
+      notify(`检测建议与已确认分类不一致，${sample.sampleNo} 已重新进入待复核（旧判断已归档可查）`, 'warning');
+    } else {
+      notify(`已为 ${sample.sampleNo} 写入一条检测记录`);
+    }
   };
 
   return (
@@ -145,6 +153,7 @@ export default function Detail() {
         <Grid item xs={12} md={4}>
           <SampleCard
             sample={sample}
+            classification={classification}
             find={find}
             sectionCount={mySections.length}
             analysisCount={myAnalysis.length}
@@ -167,11 +176,30 @@ export default function Detail() {
                   切换存放状态
                 </Button>
               </Stack>
-              <ClassificationBadge
-                category={sample.category}
-                group={sample.chemicalGroup}
-                size="medium"
-              />
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                <ClassificationBadge
+                  category={classification?.effectiveCategory ?? sample.category}
+                  group={classification?.effectiveGroup ?? sample.chemicalGroup}
+                  size="medium"
+                />
+                <ReviewStatusChip
+                  status={classification?.status ?? 'unanalyzed'}
+                  disagreement={classification?.disagreement}
+                  size="medium"
+                />
+              </Stack>
+              {classification?.status === 'pending' ? (
+                <Alert severity={classification.disagreement ? 'warning' : 'info'}>
+                  {classification.disagreement
+                            ? '检测建议存在分歧，样本处于待复核：在策展人于下方「分类核定」确认最终分类前，本页与总览、筛选均不采用任何检测建议。'
+                            : '检测建议一致但尚未核定：策展人在下方「分类核定」确认后，详情、总览与筛选才采用该结果。'}
+                </Alert>
+              ) : null}
+              {classification?.status === 'unanalyzed' ? (
+                <Alert severity="info">
+                  尚无检测记录，当前为登记初判分类；录入检测后进入待复核流程。
+                </Alert>
+              ) : null}
               <Grid container spacing={1.5}>
                 <Grid item xs={6} sm={4}>
                   <Typography variant="caption" color="text.secondary">
@@ -273,6 +301,21 @@ export default function Detail() {
           </Paper>
         </Grid>
       </Grid>
+
+      <ClassificationReviewPanel
+        key={sample.id}
+        sample={sample}
+        records={myAnalysis}
+        classification={
+          classification ?? {
+            status: 'unanalyzed' as const,
+            disagreement: false,
+            effectiveCategory: sample.category,
+            effectiveGroup: sample.chemicalGroup,
+            advice: [],
+          }
+        }
+      />
 
       <Grid container spacing={2.5}>
         <Grid item xs={12} md={7}>
@@ -421,7 +464,8 @@ export default function Detail() {
             ) : (
               <Stack spacing={1.25} sx={{ mb: 2 }}>
                 {myAnalysis.map((a) => {
-                  const a2 = classifyByAnalysis(a);
+                  const a2 = getAnalysisEvaluation(a);
+                  const hitCount = a2.thresholdHits.filter((h) => h.inRange).length;
                   return (
                     <Box
                       key={a.id}
@@ -431,14 +475,16 @@ export default function Detail() {
                         <Typography variant="subtitle2">
                           {ANALYSIS_METHOD_LABELS[a.method]} · {a.testedAt}
                         </Typography>
-                        <ClassificationBadge category={a2.category} showGroup={false} />
+                        <ClassificationBadge category={a2.advice.category} showGroup={false} />
                       </Stack>
                       <Typography variant="body2" color="text.secondary">
                         Fa {formatNumber(a.fa, 2, ' mol%')} · Fs {formatNumber(a.fs, 2, ' mol%')} · Ni{' '}
                         {formatNumber(a.ni, 2, ' wt%')} · 带宽 {formatNumber(a.kamaciteBandwidth, 3, ' mm')}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {a2.summary}
+                        {a2.advice.summary}
+                        <br />
+                        本条阈值命中 {hitCount}/{a2.thresholdHits.length} 项在常规区间
                       </Typography>
                     </Box>
                   );

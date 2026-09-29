@@ -3,6 +3,7 @@ import type { MeteoriteSample } from '../types/sample';
 import type { FindRecord } from '../types/find';
 import type { ThinSection } from '../types/section';
 import type { AnalysisRecord } from '../types/analysis';
+import { snapshotEvaluation } from '../utils/classify';
 
 /** 库名固定为 gbmeteorite-db */
 export const DB_NAME = 'gbmeteorite-db';
@@ -12,6 +13,8 @@ export const DB_NAME = 'gbmeteorite-db';
  *  - v1：建 samples / finds / sections 三张表
  *  - v2：新增 analysis 表，并为 analysis 加 sampleId 索引
  *  - v3：为 samples 补 updatedAt 字段，并按 id 回填旧记录
+ *  - v4：检测记录固化各自的阈值命中/分类建议快照，样本挂分类核定历史
+ *       （字段均为可选，旧记录在升级事务里按当前规则回填 evaluation）
  */
 export class MeteoriteDB extends Dexie {
   samples!: Table<MeteoriteSample, string>;
@@ -65,6 +68,26 @@ export class MeteoriteDB extends Dexie {
             }
           });
       });
+
+    this.version(4)
+      .stores({
+        samples:
+          'id, sampleNo, category, chemicalGroup, totalWeight, createdAt, updatedAt',
+        finds: 'id, sampleId, region, createdAt',
+        sections: 'id, sectionNo, sampleId, thickness, createdAt',
+        analysis: 'id, sampleId, sectionId, method, testedAt, createdAt',
+      })
+      .upgrade(async (tx) => {
+        // v4：为旧检测记录回填阈值命中与分类建议快照，使历史依据不随后续规则变化而变
+        await tx
+          .table<AnalysisRecord, string>('analysis')
+          .toCollection()
+          .modify((rec) => {
+            if (!rec.evaluation) {
+              rec.evaluation = snapshotEvaluation(rec);
+            }
+          });
+      });
   }
 }
 
@@ -93,8 +116,19 @@ export async function seedIfEmpty(): Promise<void> {
         fallOrFind: 'find',
         storage: 'cabinet-a',
         note: '撒哈拉回收，熔壳完整',
+        classificationDecisions: [
+          {
+            id: 'decision_seed_1',
+            decidedAt: now - 86400000 * 18,
+            category: 'chondrite',
+            chemicalGroup: 'H',
+            reason: '电子探针 Fa/Fs 落入 H 群普通球粒区间，Ni 低于 1 wt%，与切片矿物占比相符，予以确认。',
+            basedOnAnalysisIds: ['analysis_seed_1'],
+            status: 'active',
+          },
+        ],
         createdAt: now - 86400000 * 40,
-        updatedAt: now - 86400000 * 40,
+        updatedAt: now - 86400000 * 18,
       },
       {
         id: 'sample_seed_2',
@@ -106,8 +140,19 @@ export async function seedIfEmpty(): Promise<void> {
         fallOrFind: 'find',
         storage: 'cabinet-b',
         note: '八面体结构清晰',
+        classificationDecisions: [
+          {
+            id: 'decision_seed_2',
+            decidedAt: now - 86400000 * 10,
+            category: 'iron',
+            chemicalGroup: 'IAB',
+            reason: 'Ni 7.4 wt% 且铁纹石带宽 0.62 mm 指示粗粒八面体铁陨石，金属占比 92%，定为 IAB。',
+            basedOnAnalysisIds: ['analysis_seed_2'],
+            status: 'active',
+          },
+        ],
         createdAt: now - 86400000 * 30,
-        updatedAt: now - 86400000 * 30,
+        updatedAt: now - 86400000 * 10,
       },
       {
         id: 'sample_seed_3',
@@ -118,9 +163,37 @@ export async function seedIfEmpty(): Promise<void> {
         weathering: 'W2',
         fallOrFind: 'fall',
         storage: 'desiccator',
-        note: '目击坠落，无熔壳',
+        note: '目击坠落，无熔壳；分类为登记初判，尚无检测记录',
         createdAt: now - 86400000 * 18,
         updatedAt: now - 86400000 * 18,
+      },
+      {
+        id: 'sample_seed_4',
+        sampleNo: 'MET-2024-004',
+        totalWeight: 672.5,
+        category: 'achondrite',
+        chemicalGroup: 'ungrouped',
+        weathering: 'W2',
+        fallOrFind: 'find',
+        storage: 'cabinet-a',
+        note: '前后两次检测结论冲突，旧判断已被新检测推翻，等待重新复核',
+        // 无 active 核定：末条已失效，样本回到待复核
+        classificationDecisions: [
+          {
+            id: 'decision_seed_4a',
+            decidedAt: now - 86400000 * 9,
+            category: 'achondrite',
+            chemicalGroup: 'ungrouped',
+            reason: '首检 Fa 偏低、Fs-Fa 差值大，按非平衡无球粒陨石暂定，等待补测。',
+            basedOnAnalysisIds: ['analysis_seed_3', 'analysis_seed_4'],
+            status: 'superseded',
+            supersededAt: now - 86400000 * 2,
+            supersedeReason: 'new-analysis',
+            supersedeAnalysisId: 'analysis_seed_5',
+          },
+        ],
+        createdAt: now - 86400000 * 15,
+        updatedAt: now - 86400000 * 2,
       },
     ]);
     await db.finds.bulkAdd([
@@ -184,6 +257,7 @@ export async function seedIfEmpty(): Promise<void> {
         ni: 0.8,
         kamaciteBandwidth: 0.02,
         testedAt: '2024-06-12',
+        evaluation: snapshotEvaluation({ fa: 18.6, fs: 16.2, ni: 0.8, kamaciteBandwidth: 0.02 }),
         createdAt: now - 86400000 * 20,
       },
       {
@@ -196,7 +270,47 @@ export async function seedIfEmpty(): Promise<void> {
         ni: 7.4,
         kamaciteBandwidth: 0.62,
         testedAt: '2024-07-03',
+        evaluation: snapshotEvaluation({ fa: 3.2, fs: 4.1, ni: 7.4, kamaciteBandwidth: 0.62 }),
         createdAt: now - 86400000 * 12,
+      },
+      {
+        id: 'analysis_seed_3',
+        sampleId: 'sample_seed_4',
+        target: 'sample',
+        method: 'microprobe',
+        fa: 8.1,
+        fs: 17.5,
+        ni: 0.3,
+        kamaciteBandwidth: 0,
+        testedAt: '2024-07-18',
+        evaluation: snapshotEvaluation({ fa: 8.1, fs: 17.5, ni: 0.3, kamaciteBandwidth: 0 }),
+        createdAt: now - 86400000 * 12,
+      },
+      {
+        id: 'analysis_seed_4',
+        sampleId: 'sample_seed_4',
+        target: 'sample',
+        method: 'sem-eds',
+        fa: 9.4,
+        fs: 18.0,
+        ni: 0.4,
+        kamaciteBandwidth: 0,
+        testedAt: '2024-07-22',
+        evaluation: snapshotEvaluation({ fa: 9.4, fs: 18.0, ni: 0.4, kamaciteBandwidth: 0 }),
+        createdAt: now - 86400000 * 11,
+      },
+      {
+        id: 'analysis_seed_5',
+        sampleId: 'sample_seed_4',
+        target: 'sample',
+        method: 'microprobe',
+        fa: 19.8,
+        fs: 17.1,
+        ni: 0.6,
+        kamaciteBandwidth: 0.04,
+        testedAt: '2024-09-10',
+        evaluation: snapshotEvaluation({ fa: 19.8, fs: 17.1, ni: 0.6, kamaciteBandwidth: 0.04 }),
+        createdAt: now - 86400000 * 2,
       },
     ]);
   });

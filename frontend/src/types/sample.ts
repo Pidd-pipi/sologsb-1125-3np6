@@ -13,6 +13,34 @@ export type FallOrFind = 'fall' | 'find';
 /** 存放位置 */
 export type StorageLocation = 'cabinet-a' | 'cabinet-b' | 'desiccator' | 'loan-out';
 
+/**
+ * 分类复核状态：
+ *  - unanalyzed：尚无检测记录，沿用登记时的初判分类
+ *  - pending：已有检测但无生效的策展核定（建议一致为「待确认」，分歧为「待复核」）
+ *  - confirmed：策展人已选定最终分类并填写理由，详情 / 总览 / 筛选均采用该结果
+ */
+export type ClassificationReviewStatus = 'unanalyzed' | 'pending' | 'confirmed';
+
+/** 策展人对样本分类的一次核定（新检测导致失效时保留为历史记录） */
+export interface ClassificationDecision {
+  id: string;
+  decidedAt: number;
+  category: SampleCategory;
+  chemicalGroup: ChemicalGroup;
+  /** 策展人填写的核定理由（必填） */
+  reason: string;
+  /** 核定时所依据的全部检测记录 id；其后新增且结论分歧的检测会使本判断失效 */
+  basedOnAnalysisIds: string[];
+  status: 'active' | 'superseded';
+  /** 改判链条中指向上一条判断 */
+  prevDecisionId?: string;
+  supersededAt?: number;
+  /** 失效方式：新增检测使结论不再成立 / 策展人重新核定 */
+  supersedeReason?: 'new-analysis' | 'curator-revision';
+  /** 导致本判断失效的检测记录 id（supersedeReason 为 new-analysis 时） */
+  supersedeAnalysisId?: string;
+}
+
 /** 陨石样本（MeteoriteSample） */
 export interface MeteoriteSample {
   id: string;
@@ -20,13 +48,17 @@ export interface MeteoriteSample {
   sampleNo: string;
   /** 总重量，单位 g */
   totalWeight: number;
+  /** 登记时填写的分类（初判）；检测汇总与策展核定见 classificationDecisions */
   category: SampleCategory;
+  /** 登记时填写的化学群（初判） */
   chemicalGroup: ChemicalGroup;
   weathering: WeatheringGrade;
   fallOrFind: FallOrFind;
   storage: StorageLocation;
   /** 备注（可选） */
   note?: string;
+  /** 历次分类核定，末位为当前生效判断；空数组/缺省表示尚未核定 */
+  classificationDecisions?: ClassificationDecision[];
   createdAt: number;
   /** v3 升级迁移新增字段 */
   updatedAt: number;
