@@ -20,7 +20,10 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import SampleCard from '../components/common/SampleCard';
 import FieldGroup from '../components/common/FieldGroup';
-import ClassificationBadge from '../components/common/Badge';
+import ClassificationBadge, {
+  EffectiveClassificationBadge,
+} from '../components/common/Badge';
+import ClassificationReviewPanel from '../components/common/ClassificationReviewPanel';
 import EmptyState from '../components/common/EmptyState';
 import { useSampleStore } from '../stores/sampleStore';
 import { useToastStore } from '../stores/uiStore';
@@ -43,12 +46,15 @@ import {
   type SectionQuality,
 } from '../types/section';
 import {
+  CATEGORY_LABELS,
+  CHEMICAL_GROUP_LABELS,
   FALL_OR_FIND_LABELS,
   STORAGE_LABELS,
   WEATHERING_LABELS,
 } from '../types/sample';
 import { FIND_ENVIRONMENT_LABELS, COORDINATE_SOURCE_LABELS } from '../types/find';
 import { classifyByAnalysis, evaluateThresholds } from '../utils/classify';
+import { getAnalysisEvaluation, summarizeReview } from '../utils/review';
 import { formatDate, formatNumber, formatWeight } from '../utils/format';
 import { formatCoordinate } from '../utils/geo';
 
@@ -68,6 +74,10 @@ export default function Detail() {
   const find = useMemo(() => finds.find((f) => f.sampleId === id), [finds, id]);
   const mySections = useMemo(() => sections.filter((s) => s.sampleId === id), [sections, id]);
   const myAnalysis = useMemo(() => analysis.filter((a) => a.sampleId === id), [analysis, id]);
+  const review = useMemo(
+    () => (sample ? summarizeReview(sample, myAnalysis) : null),
+    [sample, myAnalysis],
+  );
 
   const [sectionDraft, setSectionDraft] = useState({
     sectionNo: '',
@@ -119,7 +129,7 @@ export default function Detail() {
   };
 
   const submitAnalysis = async () => {
-    await addAnalysis({
+    const outcome = await addAnalysis({
       sampleId: sample.id,
       target: 'sample',
       method: analysisDraft.method,
@@ -129,7 +139,13 @@ export default function Detail() {
       kamaciteBandwidth: Number(analysisDraft.kamaciteBandwidth),
       testedAt: analysisDraft.testedAt,
     });
-    notify(`已为 ${sample.sampleNo} 写入一条检测记录`);
+    if (outcome.reopened) {
+      notify(`已为 ${sample.sampleNo} 写入检测：与已确认分类不一致，样本已重新进入待复核，旧裁决归档可查`, 'warning');
+    } else if (outcome.hasConflict) {
+      notify(`已为 ${sample.sampleNo} 写入检测：检测意见出现分歧，样本标记为待复核`, 'warning');
+    } else {
+      notify(`已为 ${sample.sampleNo} 写入一条检测记录，等待策展人复核`, 'info');
+    }
   };
 
   return (
@@ -167,11 +183,20 @@ export default function Detail() {
                   切换存放状态
                 </Button>
               </Stack>
-              <ClassificationBadge
-                category={sample.category}
-                group={sample.chemicalGroup}
-                size="medium"
-              />
+              <Stack spacing={0.75}>
+                <EffectiveClassificationBadge
+                  sample={sample}
+                  analysis={myAnalysis}
+                  size="small"
+                />
+                {review && review.status === 'pending-review' ? (
+                  <Typography variant="caption" color="text.secondary">
+                    登记初判：{CATEGORY_LABELS[sample.category]} ·{' '}
+                    {CHEMICAL_GROUP_LABELS[sample.chemicalGroup]}
+                    （未经策展人采信，暂不用于总览、地图与筛选）
+                  </Typography>
+                ) : null}
+              </Stack>
               <Grid container spacing={1.5}>
                 <Grid item xs={6} sm={4}>
                   <Typography variant="caption" color="text.secondary">
@@ -420,26 +445,66 @@ export default function Detail() {
               <Alert severity="info">暂无检测记录。</Alert>
             ) : (
               <Stack spacing={1.25} sx={{ mb: 2 }}>
+                {review && review.hasConflict ? (
+                  <Alert severity="warning">
+                    各条检测建议不一致（{review.adviceCategories.map((c) => CATEGORY_LABELS[c]).join(' / ')}），
+                    样本已标记待复核，请策展人在下方核对各条依据后裁决。
+                  </Alert>
+                ) : null}
                 {myAnalysis.map((a) => {
-                  const a2 = classifyByAnalysis(a);
+                  const a2 = getAnalysisEvaluation(a);
+                  const outOfRange = a2.hits.filter((h) => !h.inRange);
+                  const contradictsDecision =
+                    sample.classificationStatus === 'confirmed' &&
+                    sample.classificationDecision &&
+                    a2.advice.category !== sample.classificationDecision.category;
                   return (
                     <Box
                       key={a.id}
-                      sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5 }}
+                      sx={{
+                        border: '1px solid',
+                        borderColor: contradictsDecision ? 'error.main' : 'divider',
+                        borderRadius: 2,
+                        p: 1.5,
+                      }}
                     >
                       <Stack direction="row" justifyContent="space-between" flexWrap="wrap" gap={1}>
                         <Typography variant="subtitle2">
                           {ANALYSIS_METHOD_LABELS[a.method]} · {a.testedAt}
+                          {contradictsDecision ? (
+                            <Chip
+                              size="small"
+                              color="error"
+                              label="与已确认分类不一致"
+                              sx={{ ml: 1, height: 20 }}
+                            />
+                          ) : null}
                         </Typography>
-                        <ClassificationBadge category={a2.category} showGroup={false} />
+                        <ClassificationBadge category={a2.advice.category} showGroup={false} />
                       </Stack>
                       <Typography variant="body2" color="text.secondary">
                         Fa {formatNumber(a.fa, 2, ' mol%')} · Fs {formatNumber(a.fs, 2, ' mol%')} · Ni{' '}
                         {formatNumber(a.ni, 2, ' wt%')} · 带宽 {formatNumber(a.kamaciteBandwidth, 3, ' mm')}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {a2.summary}
+                        {a2.advice.summary}
                       </Typography>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+                        {a2.hits.map((h) => (
+                          <Chip
+                            key={h.key}
+                            size="small"
+                            color={h.inRange ? 'success' : 'warning'}
+                            variant={h.inRange ? 'outlined' : 'filled'}
+                            label={`${h.label} ${h.value}${h.unit} · ${h.inRange ? '阈值内' : '超阈值'}`}
+                          />
+                        ))}
+                        {outOfRange.length ? (
+                          <Typography variant="caption" color="warning.main" sx={{ alignSelf: 'center' }}>
+                            {outOfRange.length} 项超出常规阈值
+                          </Typography>
+                        ) : null}
+                      </Stack>
                     </Box>
                   );
                 })}
@@ -546,6 +611,8 @@ export default function Detail() {
           </Paper>
         </Grid>
       </Grid>
+
+      <ClassificationReviewPanel sample={sample} />
     </Stack>
   );
 }

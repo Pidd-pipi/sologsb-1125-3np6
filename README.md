@@ -40,19 +40,29 @@ docker compose down
 
 | 路由 | 说明 | 消费模型 |
 | --- | --- | --- |
-| `/` | 样本总览：卡片流 + 分类/化学群/重量区间筛选与排序，缺坐标或缺切片显示角标 | MeteoriteSample |
-| `/samples/new` | 样本登记：编号生成、分类化学群、重量、存放位置，可补录发现地坐标并即时校验 | MeteoriteSample、FindRecord |
-| `/samples/:id` | 样本详情：基本信息 + 发现地摘要 + 切片列表 + 分析记录，可就地新增 | 四个模型 |
-| `/sections` | 切片库：按厚度与矿物占比筛选，回跳样本，批量标注质量 | ThinSection、MeteoriteSample |
-| `/analysis` | 分析检测：录入 Fa / Fs / Ni / 铁纹石带宽，实时分类建议与阈值命中说明 | AnalysisRecord、MeteoriteSample |
-| `/locations` | 发现地分布：SVG 网格按经纬度打点、按分类着色、点选弹出样本清单 | FindRecord、MeteoriteSample |
+| `/` | 样本总览：卡片流 + 分类/化学群/重量区间筛选与排序，缺坐标或缺切片显示角标，**待复核样本以虚线徽标标出且不参与分类/化学群筛选**，可一键「只看待复核」 | MeteoriteSample |
+| `/samples/new` | 样本登记：编号生成、分类化学群（**仅为初判，样本默认待复核**）、重量、存放位置，可补录发现地坐标并即时校验 | MeteoriteSample、FindRecord |
+| `/samples/:id` | 样本详情：基本信息 + 发现地摘要 + 切片列表 + 分析记录（**每条保留自己的阈值命中**）+ **分类复核与策展人裁决面板**，可就地新增 | 四个模型 |
+| `/sections` | 切片库：按厚度与矿物占比筛选，回跳样本，批量标注质量（样本徽标同样只采信已确认分类） | ThinSection、MeteoriteSample |
+| `/analysis` | 分析检测：录入 Fa / Fs / Ni / 铁纹石带宽，实时分类建议与阈值命中说明；**保存时固化本条意见快照，与已确认裁决冲突会把样本打回待复核** | AnalysisRecord、MeteoriteSample |
+| `/locations` | 发现地分布：SVG 网格按经纬度打点、**按生效分类着色（待复核为灰色虚线圈）**、点选弹出样本清单 | FindRecord、MeteoriteSample |
+
+## 分类复核工作流（v4）
+
+同一块陨石多次检测可能给出不一致的分类建议，系统以「检测意见 → 待复核 → 策展人裁决」状态机保证采信结果可追溯：
+
+1. **每条检测保留自己的意见**：检测保存时固化 `evaluation` 快照（分类建议、置信度、4 项阈值命中），后续规则调整或样本裁决变化都不改变历史意见。
+2. **意见分歧即待复核**：同样本检测建议不一致（或尚无检测）时，样本标记为 `pending-review`，详情页列出各条依据与分歧原因；登记时的分类只作「初判」展示。
+3. **策展人裁决才生效**：策展人核对各条依据后选定最终分类与化学群、**必须填写采信理由**、可勾选引用的检测记录。确认后样本变为 `confirmed`，详情、总览卡片、分类/化学群筛选、地图着色与地区统计才统一采用该结果。
+4. **新检测可推翻旧裁决**：新增检测的建议与已确认分类不一致时，样本自动重新进入待复核，旧裁决（含理由、署名、引用依据）归档到 `decisionHistory` 继续可查，标记推翻原因与触发检测；策展人也可随时重新裁决，旧判断同样留痕。
 
 ## 数据模型（`src/types/` 独立文件）
 
-- `types/sample.ts` — **MeteoriteSample**：id、样本编号、总重量 g、分类、化学群、风化等级 W0–W4、发现/坠落、存放位置
+- `types/sample.ts` — **MeteoriteSample**：id、样本编号、总重量 g、分类（登记初判）、化学群、风化等级 W0–W4、发现/坠落、存放位置；v4 起含复核状态 `classificationStatus`、策展人裁决 `classificationDecision`（最终分类/化学群/理由/署名/引用检测）与历史裁决 `decisionHistory`
 - `types/find.ts` — **FindRecord**：id、关联样本、地名、国家地区、经纬度、坐标来源（GPS/文献）、发现环境、发现者
 - `types/section.ts` — **ThinSection**：id、切片编号、关联样本、厚度 μm、制样方式、矿物占比、显微照片清单
-- `types/analysis.ts` — **AnalysisRecord**：id、关联样本或切片、方法、橄榄石 Fa、辉石 Fs、Ni wt%、铁纹石带宽 mm、检测日期
+- `types/analysis.ts` — **AnalysisRecord**：id、关联样本或切片、方法、橄榄石 Fa、辉石 Fs、Ni wt%、铁纹石带宽 mm、检测日期；v4 起保存时固化 `evaluation` 评估快照（建议 + 阈值命中）
+- `utils/review.ts` — 复核状态机纯函数：检测意见汇总、分歧判定、生效分类取值、新检测推翻裁决的归档补丁
 
 ## 目录结构
 
@@ -76,8 +86,9 @@ sologsb-1125/
         ├── components/common/{SampleCard,Badge,FieldGroup,EmptyState,CoordinatePicker,AppShell}.tsx
         ├── hooks/{useSampleFilter,useLocalDraft,useRegionStats}.ts
         ├── pages/{Overview,New,Detail,Sections,Analysis,Locations}.tsx
+        ├── components/common/{SampleCard,Badge,ClassificationReviewPanel,FieldGroup,EmptyState,CoordinatePicker,AppShell}.tsx
         ├── router/index.tsx
-        └── utils/{classify,format,geo}.ts
+        └── utils/{classify,review,format,geo}.ts
 ```
 
 ## 数据存储说明
@@ -87,8 +98,9 @@ sologsb-1125/
   - v1 建 `samples` / `finds` / `sections`
   - v2 新增 `analysis` 表并加 `sampleId` 索引
   - v3 为 `samples` 补 `updatedAt` 字段并按 id 回填旧记录
+  - v4 引入分类复核状态机：旧库样本一律转为待复核（登记分类保留为初判），旧检测按当前规则补算评估快照
 - **草稿**：`/samples/new` 与 `/analysis` 的表单草稿写入 localStorage（键前缀 `gbmeteorite:draft:`），切页自动恢复，提交后清理
-- 首次打开会灌入 3 份演示样本、2 条发现记录、2 张切片与 2 条检测记录，便于直接体验筛选与打点
+- 首次打开会灌入 4 份演示样本（含已确认、无检测待复核、检测分歧且旧裁决被推翻留痕等场景）、3 条发现记录、2 张切片与 4 条检测记录，便于直接体验筛选、复核与打点
 
 ## 环境变量
 

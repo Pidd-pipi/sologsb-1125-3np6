@@ -20,7 +20,9 @@ import {
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import EmptyState from '../components/common/EmptyState';
-import ClassificationBadge from '../components/common/Badge';
+import ClassificationBadge, {
+  EffectiveClassificationBadge,
+} from '../components/common/Badge';
 import FieldGroup from '../components/common/FieldGroup';
 import { useLocalDraft } from '../hooks/useLocalDraft';
 import { useSampleStore } from '../stores/sampleStore';
@@ -34,6 +36,7 @@ import {
   type AnalysisTarget,
 } from '../types/analysis';
 import { classifyByAnalysis, evaluateThresholds } from '../utils/classify';
+import { getAnalysisEvaluation } from '../utils/review';
 import { formatDate } from '../utils/format';
 
 interface AnalysisDraft {
@@ -93,7 +96,7 @@ export default function Analysis() {
       return;
     }
     setError(null);
-    await addAnalysis({
+    const outcome = await addAnalysis({
       sampleId: value.sampleId,
       sectionId: value.target === 'section' ? value.sectionId : undefined,
       target: value.target,
@@ -105,7 +108,13 @@ export default function Analysis() {
       testedAt: value.testedAt,
     });
     clear();
-    notify('检测记录已写入本地库');
+    if (outcome.reopened) {
+      notify('检测已写入：与该样本已确认分类不一致，样本重新进入待复核，旧裁决归档可查', 'warning');
+    } else if (outcome.hasConflict) {
+      notify('检测已写入：与既有检测意见分歧，样本标记为待复核', 'warning');
+    } else {
+      notify('检测记录已写入本地库，样本等待策展人复核');
+    }
     patch({ fa: 18.5, fs: 16, ni: 0.8, kamaciteBandwidth: 0.05 });
   };
 
@@ -349,23 +358,55 @@ export default function Analysis() {
           <Stack spacing={1}>
             {analysis.slice(0, 12).map((a) => {
               const s = samples.find((x) => x.id === a.sampleId);
-              const ev = classifyByAnalysis(a);
+              const ev = getAnalysisEvaluation(a);
+              const outOfRange = ev.hits.filter((h) => !h.inRange);
+              const contradicts =
+                s?.classificationStatus === 'confirmed' &&
+                s.classificationDecision &&
+                ev.advice.category !== s.classificationDecision.category;
               return (
                 <Box
                   key={a.id}
-                  sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5 }}
+                  sx={{
+                    border: '1px solid',
+                    borderColor: contradicts ? 'error.main' : 'divider',
+                    borderRadius: 2,
+                    p: 1.5,
+                  }}
                 >
                   <Stack direction="row" justifyContent="space-between" flexWrap="wrap" gap={1}>
                     <Typography variant="subtitle2">
                       {s ? s.sampleNo : '未知样本'} · {ANALYSIS_METHOD_LABELS[a.method]} ·{' '}
                       {formatDate(a.testedAt)}
+                      {contradicts ? (
+                        <Chip size="small" color="error" label="推翻已确认分类" sx={{ ml: 1 }} />
+                      ) : null}
                     </Typography>
-                    <ClassificationBadge category={ev.category} showGroup={false} />
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <ClassificationBadge category={ev.advice.category} showGroup={false} />
+                      {s ? <EffectiveClassificationBadge sample={s} showStatus={false} /> : null}
+                    </Stack>
                   </Stack>
                   <Typography variant="caption" color="text.secondary">
                     Fa {a.fa} mol% · Fs {a.fs} mol% · Ni {a.ni} wt% · 带宽 {a.kamaciteBandwidth} mm ——{' '}
-                    {ev.summary}
+                    {ev.advice.summary}
                   </Typography>
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+                    {ev.hits.map((h) => (
+                      <Chip
+                        key={h.key}
+                        size="small"
+                        color={h.inRange ? 'default' : 'warning'}
+                        variant="outlined"
+                        label={`${h.label} ${h.inRange ? '阈值内' : '超阈值'}`}
+                      />
+                    ))}
+                    {outOfRange.length ? (
+                      <Typography variant="caption" color="warning.main" sx={{ alignSelf: 'center' }}>
+                        {outOfRange.length} 项超常规阈值
+                      </Typography>
+                    ) : null}
+                  </Stack>
                 </Box>
               );
             })}

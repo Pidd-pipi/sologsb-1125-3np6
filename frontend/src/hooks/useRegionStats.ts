@@ -1,16 +1,17 @@
 import { useMemo } from 'react';
 import { useSampleStore } from '../stores/sampleStore';
 import type { SampleCategory } from '../types/sample';
+import { effectiveCategory } from '../utils/review';
 
 export interface RegionStat {
   region: string;
   sampleCount: number;
   totalWeight: number;
   categories: Record<string, number>;
-  points: { sampleId: string; longitude: number; latitude: number; category: SampleCategory }[];
+  points: { sampleId: string; longitude: number; latitude: number; category: SampleCategory | null }[];
 }
 
-/** 按国家地区聚合样本数与总重量，被 /locations 消费 */
+/** 按国家地区聚合样本数与总重量，被 /locations 消费；分类只统计已确认的生效分类 */
 export function useRegionStats() {
   const finds = useSampleStore((s) => s.finds);
   const samples = useSampleStore((s) => s.samples);
@@ -27,12 +28,13 @@ export function useRegionStats() {
       entry.sampleCount += 1;
       entry.totalWeight += sample?.totalWeight ?? 0;
       if (sample) {
-        entry.categories[sample.category] = (entry.categories[sample.category] ?? 0) + 1;
+        const category = effectiveCategory(sample);
+        if (category) entry.categories[category] = (entry.categories[category] ?? 0) + 1;
         entry.points.push({
           sampleId: sample.id,
           longitude: f.longitude,
           latitude: f.latitude,
-          category: sample.category,
+          category,
         });
       }
       map.set(region, entry);

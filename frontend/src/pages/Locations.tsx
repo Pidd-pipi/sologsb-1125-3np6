@@ -13,13 +13,14 @@ import {
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import EmptyState from '../components/common/EmptyState';
-import ClassificationBadge from '../components/common/Badge';
+import { EffectiveClassificationBadge } from '../components/common/Badge';
 import { useRegionStats } from '../hooks/useRegionStats';
 import { useSampleStore } from '../stores/sampleStore';
 import { CATEGORY_LABELS, type SampleCategory } from '../types/sample';
 import { categoryColor, formatWeight } from '../utils/format';
 import { FIND_ENVIRONMENT_LABELS } from '../types/find';
 import { formatCoordinate, graticuleLines, projectToGrid } from '../utils/geo';
+import { effectiveCategory } from '../utils/review';
 
 const SIZE = 100;
 const GRID = graticuleLines(SIZE, 30);
@@ -97,6 +98,15 @@ export default function Locations() {
                     sx={{ bgcolor: categoryColor(c), color: '#fff' }}
                   />
                 ))}
+                <Chip
+                  size="small"
+                  label="待复核"
+                  sx={{
+                    bgcolor: '#fff',
+                    color: '#9e9e9e',
+                    border: '1px dashed #9e9e9e',
+                  }}
+                />
               </Stack>
 
               <Box
@@ -126,7 +136,9 @@ export default function Locations() {
                   <line x1={0} y1={SIZE / 2} x2={SIZE} y2={SIZE / 2} stroke="#cbbfa4" strokeWidth="0.45" />
                   <line x1={SIZE / 2} y1={0} x2={SIZE / 2} y2={SIZE} stroke="#cbbfa4" strokeWidth="0.45" />
                   {points.map((p) => {
-                    const color = p.sample ? categoryColor(p.sample.category) : '#9e9e9e';
+                    const effCategory = p.sample ? effectiveCategory(p.sample) : null;
+                    const pending = p.sample !== undefined && effCategory === null;
+                    const color = effCategory ? categoryColor(effCategory) : '#9e9e9e';
                     const active = p.find.id === activePoint;
                     return (
                       <g key={p.find.id} onClick={() => setActivePoint(p.find.id)} style={{ cursor: 'pointer' }}>
@@ -134,19 +146,31 @@ export default function Locations() {
                           {`${p.sample?.sampleNo ?? '未知样本'} · ${p.find.placeName} · ${formatCoordinate(
                             p.find.longitude,
                             p.find.latitude,
-                          )}`}
+                          )}${pending ? '（分类待复核）' : ''}`}
                         </title>
                         {active ? (
                           <circle cx={p.pos.x} cy={p.pos.y} r="4.2" fill="none" stroke="#c0392b" strokeWidth="0.7" />
                         ) : null}
-                        <circle
-                          cx={p.pos.x}
-                          cy={p.pos.y}
-                          r={active ? 2.4 : 1.9}
-                          fill={color}
-                          stroke="#fff"
-                          strokeWidth="0.5"
-                        />
+                        {pending ? (
+                          <circle
+                            cx={p.pos.x}
+                            cy={p.pos.y}
+                            r={active ? 2.6 : 2.1}
+                            fill="#fafafa"
+                            stroke={color}
+                            strokeWidth="0.7"
+                            strokeDasharray="0.9 0.6"
+                          />
+                        ) : (
+                          <circle
+                            cx={p.pos.x}
+                            cy={p.pos.y}
+                            r={active ? 2.4 : 1.9}
+                            fill={color}
+                            stroke="#fff"
+                            strokeWidth="0.5"
+                          />
+                        )}
                       </g>
                     );
                   })}
@@ -177,9 +201,8 @@ export default function Locations() {
                         >
                           {activeFind.sample.sampleNo} ↗
                         </Typography>
-                        <ClassificationBadge
-                          category={activeFind.sample.category}
-                          group={activeFind.sample.chemicalGroup}
+                        <EffectiveClassificationBadge
+                          sample={activeFind.sample}
                         />
                       </>
                     ) : (

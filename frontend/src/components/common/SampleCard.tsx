@@ -8,7 +8,7 @@ import {
 import type { FindRecord } from '../../types/find';
 import { formatWeight } from '../../utils/format';
 import { formatCoordinate } from '../../utils/geo';
-import { ClassificationBadge } from './Badge';
+import { EffectiveClassificationBadge } from './Badge';
 
 interface SampleCardProps {
   sample: MeteoriteSample;
@@ -62,7 +62,7 @@ export function SampleCard({
             </Typography>
           </Stack>
 
-          <ClassificationBadge category={sample.category} group={sample.chemicalGroup} />
+          <EffectiveClassificationBadge sample={sample} />
 
           <Typography variant="body2" color="text.secondary">
             {FALL_OR_FIND_LABELS[sample.fallOrFind]} · {WEATHERING_LABELS[sample.weathering]}

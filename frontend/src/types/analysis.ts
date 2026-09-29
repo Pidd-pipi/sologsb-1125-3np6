@@ -26,6 +26,12 @@ export interface AnalysisRecord {
   /** 检测日期 YYYY-MM-DD */
   testedAt: string;
   createdAt: number;
+  /**
+   * 保存时固化的评估快照（v4 起）：该条记录自己的阈值命中与分类建议，
+   * 即使后续分类规则调整或样本裁决变化，本条意见仍保持可查。
+   * v3 以前的旧记录缺省该字段，读取时按当前规则懒补算。
+   */
+  evaluation?: AnalysisEvaluation;
 }
 
 export const ANALYSIS_METHOD_LABELS: Record<AnalysisMethod, string> = {

@@ -2,8 +2,22 @@ import { create } from 'zustand';
 import { db, makeId, seedIfEmpty } from '../db';
 import type { AnalysisRecord } from '../types/analysis';
 import type { FindRecord } from '../types/find';
-import type { MeteoriteSample } from '../types/sample';
+import type {
+  ClassificationDecision,
+  ClassificationStatus,
+  MeteoriteSample,
+  SupersededDecision,
+} from '../types/sample';
 import type { ThinSection } from '../types/section';
+import { classifyByAnalysis, evaluateThresholds } from '../utils/classify';
+import { reconcileOnNewAnalysis } from '../utils/review';
+
+export interface AddAnalysisOutcome {
+  /** 新检测是否与既有检测意见产生分歧 */
+  hasConflict: boolean;
+  /** 新检测是否推翻了已确认裁决（样本重回待复核） */
+  reopened: boolean;
+}
 
 export interface SampleState {
   samples: MeteoriteSample[];
@@ -19,7 +33,13 @@ export interface SampleState {
   addFind: (input: Omit<FindRecord, 'id' | 'createdAt'>) => Promise<string>;
   addSection: (input: Omit<ThinSection, 'id' | 'createdAt'>) => Promise<string>;
   updateSection: (id: string, patch: Partial<ThinSection>) => Promise<void>;
-  addAnalysis: (input: Omit<AnalysisRecord, 'id' | 'createdAt'>) => Promise<string>;
+  addAnalysis: (input: Omit<AnalysisRecord, 'id' | 'createdAt' | 'evaluation'>) => Promise<AddAnalysisOutcome>;
+  /** 策展人选定最终分类并填写理由；旧裁决归档到 decisionHistory 继续可查 */
+  confirmClassification: (
+    sampleId: string,
+    decision: Omit<ClassificationDecision, 'decidedAt' | 'evidenceAnalysisIds'> &
+      Partial<Pick<ClassificationDecision, 'evidenceAnalysisIds'>>,
+  ) => Promise<void>;
   nextSampleSeq: () => number;
 }
 
@@ -49,7 +69,16 @@ export const useSampleStore = create<SampleState>((set, get) => ({
 
   addSample: async (input) => {
     const now = Date.now();
-    const record: MeteoriteSample = { ...input, id: makeId('sample'), createdAt: now, updatedAt: now };
+    // 新登记样本：登记分类仅为初判，未经策展人复核前一律待复核
+    const record: MeteoriteSample = {
+      ...input,
+      classificationStatus: (input.classificationStatus ?? 'pending-review') as ClassificationStatus,
+      classificationDecision: input.classificationDecision ?? null,
+      decisionHistory: input.decisionHistory ?? [],
+      id: makeId('sample'),
+      createdAt: now,
+      updatedAt: now,
+    };
     await db.samples.add(record);
     set({ samples: [record, ...get().samples] });
     return record.id;
@@ -98,10 +127,89 @@ export const useSampleStore = create<SampleState>((set, get) => ({
   },
 
   addAnalysis: async (input) => {
-    const record: AnalysisRecord = { ...input, id: makeId('analysis'), createdAt: Date.now() };
-    await db.analysis.add(record);
-    set({ analysis: [record, ...get().analysis] });
-    return record.id;
+    const now = Date.now();
+    // 保存时固化本条记录自己的分类建议与阈值命中，之后不再随后续规则变化
+    const record: AnalysisRecord = {
+      ...input,
+      id: makeId('analysis'),
+      createdAt: now,
+      evaluation: {
+        advice: classifyByAnalysis(input),
+        hits: evaluateThresholds(input),
+      },
+    };
+
+    const sample = get().samples.find((s) => s.id === record.sampleId);
+    const reopenPatch = sample ? reconcileOnNewAnalysis(sample, record, now) : null;
+
+    await db.transaction('rw', db.analysis, db.samples, async () => {
+      await db.analysis.add(record);
+      if (reopenPatch) await db.samples.update(record.sampleId, { ...reopenPatch, updatedAt: now });
+    });
+
+    // 意见分歧：与同样本其它现存检测的建议分类不一致
+    const priorAdvice = new Set(
+      get()
+        .analysis.filter((a) => a.sampleId === record.sampleId)
+        .map((a) =>
+          a.evaluation ? a.evaluation.advice.category : classifyByAnalysis(a).category,
+        ),
+    );
+    const hasConflict = [...priorAdvice].some((c) => c !== record.evaluation!.advice.category);
+
+    set((state) => ({
+      analysis: [record, ...state.analysis],
+      samples: reopenPatch
+        ? state.samples.map((s) =>
+            s.id === record.sampleId ? { ...s, ...reopenPatch, updatedAt: now } : s,
+          )
+        : state.samples,
+    }));
+
+    return { hasConflict, reopened: reopenPatch !== null };
+  },
+
+  confirmClassification: async (sampleId, decisionInput) => {
+    const now = Date.now();
+    const sample = get().samples.find((s) => s.id === sampleId);
+    if (!sample) return;
+
+    const decision: ClassificationDecision = {
+      category: decisionInput.category,
+      chemicalGroup: decisionInput.chemicalGroup,
+      reason: decisionInput.reason,
+      curator: decisionInput.curator?.trim() || undefined,
+      decidedAt: now,
+      evidenceAnalysisIds:
+        decisionInput.evidenceAnalysisIds ??
+        get()
+          .analysis.filter((a) => a.sampleId === sampleId)
+          .map((a) => a.id),
+    };
+
+    // 策展人重新裁决（待复核本可能由旧裁决被推翻引起）：把旧裁决归档留痕
+    let history: SupersededDecision[] = sample.decisionHistory ?? [];
+    if (sample.classificationStatus === 'confirmed' && sample.classificationDecision) {
+      history = [
+        {
+          ...sample.classificationDecision,
+          supersededReason: 're-decided',
+          supersededAt: now,
+        },
+        ...history,
+      ];
+    }
+
+    const patch: Partial<MeteoriteSample> = {
+      classificationStatus: 'confirmed',
+      classificationDecision: decision,
+      decisionHistory: history,
+      updatedAt: now,
+    };
+    await db.samples.update(sampleId, patch);
+    set({
+      samples: get().samples.map((s) => (s.id === sampleId ? { ...s, ...patch } : s)),
+    });
   },
 
   nextSampleSeq: () => {

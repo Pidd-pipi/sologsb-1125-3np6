@@ -13,6 +13,42 @@ export type FallOrFind = 'fall' | 'find';
 /** 存放位置 */
 export type StorageLocation = 'cabinet-a' | 'cabinet-b' | 'desiccator' | 'loan-out';
 
+/**
+ * 分类复核状态（v4 起）：
+ *  - pending-review：检测意见尚未经策展人采信。检测意见分歧、尚无检测或已确认结果被新检测推翻时处于该状态；
+ *  - confirmed：策展人已基于各条检测依据选定最终分类并填写理由，详情/总览/筛选采用该结果。
+ */
+export type ClassificationStatus = 'pending-review' | 'confirmed';
+
+/**
+ * 策展人最终裁决：仅在 confirmed 时生效。
+ * 登记时填写的 category / chemicalGroup 保留为「初判」，不再被对外页面直接采信。
+ */
+export interface ClassificationDecision {
+  /** 策展人最终选定的分类 */
+  category: SampleCategory;
+  /** 策展人最终选定的化学群 */
+  chemicalGroup: ChemicalGroup;
+  /** 必填：采信理由 */
+  reason: string;
+  /** 策展人署名（可选） */
+  curator?: string;
+  /** 裁决时间 */
+  decidedAt: number;
+  /** 裁决时引用的检测记录 id（各条依据） */
+  evidenceAnalysisIds: string[];
+}
+
+/** 被推翻 / 被替换的历史裁决，永久保留可查 */
+export interface SupersededDecision extends ClassificationDecision {
+  /** 失效原因：new-conflict（新检测与裁决不一致）/ re-decided（策展人重新裁决） */
+  supersededReason: 'new-conflict' | 're-decided';
+  /** 失效时间 */
+  supersededAt: number;
+  /** 触发推翻的检测记录 id（new-conflict 时） */
+  triggeredByAnalysisId?: string;
+}
+
 /** 陨石样本（MeteoriteSample） */
 export interface MeteoriteSample {
   id: string;
@@ -20,13 +56,21 @@ export interface MeteoriteSample {
   sampleNo: string;
   /** 总重量，单位 g */
   totalWeight: number;
+  /** 登记时的初步分类：未经裁决前不被对外页面直接采信 */
   category: SampleCategory;
+  /** 登记时的初步化学群 */
   chemicalGroup: ChemicalGroup;
   weathering: WeatheringGrade;
   fallOrFind: FallOrFind;
   storage: StorageLocation;
   /** 备注（可选） */
   note?: string;
+  /** v4 起：分类复核状态；旧数据迁移时回填为 pending-review */
+  classificationStatus?: ClassificationStatus;
+  /** v4 起：策展人最终裁决（confirmed 时存在） */
+  classificationDecision?: ClassificationDecision | null;
+  /** v4 起：被推翻/替换的历史裁决，按失效时间倒序维护 */
+  decisionHistory?: SupersededDecision[];
   createdAt: number;
   /** v3 升级迁移新增字段 */
   updatedAt: number;
@@ -72,6 +116,19 @@ export const CHEMICAL_GROUPS: ChemicalGroup[] = ['H', 'L', 'LL', 'IAB', 'ungroup
 export const WEATHERING_GRADES: WeatheringGrade[] = ['W0', 'W1', 'W2', 'W3', 'W4'];
 export const FALL_OR_FINDS: FallOrFind[] = ['fall', 'find'];
 export const STORAGE_LOCATIONS: StorageLocation[] = ['cabinet-a', 'cabinet-b', 'desiccator', 'loan-out'];
+
+export const CLASSIFICATION_STATUS_LABELS: Record<ClassificationStatus, string> = {
+  'pending-review': '待复核',
+  confirmed: '已确认',
+};
+
+/** 各分类下策展人裁决时化学群的默认/候选项 */
+export const CATEGORY_DEFAULT_GROUP: Record<SampleCategory, ChemicalGroup> = {
+  chondrite: 'H',
+  iron: 'IAB',
+  'stony-iron': 'ungrouped',
+  achondrite: 'ungrouped',
+};
 
 /** 分类建议结果 */
 export interface ClassificationAdvice {

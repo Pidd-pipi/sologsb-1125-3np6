@@ -203,7 +203,10 @@ export default function New() {
               required
             />
 
-            <FieldGroup title="分类与化学群" hint="分类决定徽标配色与总览筛选分组">
+            <FieldGroup
+              title="分类与化学群（初判）"
+              hint="登记分类仅作初判：样本默认进入「待复核」，待检测意见经策展人采信后才用于总览、地图与筛选"
+            >
               <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
                 <FormControl size="small" sx={{ minWidth: 180 }}>
                   <InputLabel id="category-label">分类</InputLabel>

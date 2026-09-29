@@ -26,6 +26,7 @@ import {
   CHEMICAL_GROUPS,
 } from '../types/sample';
 import { formatWeight } from '../utils/format';
+import { effectiveCategory } from '../utils/review';
 
 /** `/` 样本总览 */
 export default function Overview() {
@@ -50,6 +51,10 @@ export default function Overview() {
   }, [analysis]);
 
   const totalWeight = results.reduce((n, s) => n + s.totalWeight, 0);
+  const pendingCount = useMemo(
+    () => samples.filter((s) => !effectiveCategory(s)).length,
+    [samples],
+  );
 
   return (
     <Stack spacing={2.5}>
@@ -58,6 +63,7 @@ export default function Overview() {
           <Typography variant="h4">样本总览</Typography>
           <Typography variant="body2" color="text.secondary">
             共 {total} 份样本，当前筛选命中 {results.length} 份，合计 {formatWeight(totalWeight)}
+            ；其中 {pendingCount} 份分类待复核，卡片以虚线徽标标出，不参与分类 / 化学群筛选。
           </Typography>
         </Box>
         <Button component={RouterLink} to="/samples/new" variant="contained" startIcon={<AddIcon />}>
@@ -95,6 +101,13 @@ export default function Overview() {
                 />
               );
             })}
+            <Box sx={{ flex: 1 }} />
+            <Chip
+              label={`只看待复核（${pendingCount}）`}
+              color="warning"
+              variant={ui.reviewOnly ? 'filled' : 'outlined'}
+              onClick={() => ui.setReviewOnly(!ui.reviewOnly)}
+            />
           </Stack>
 
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>

@@ -17,7 +17,7 @@ import {
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import EmptyState from '../components/common/EmptyState';
-import ClassificationBadge from '../components/common/Badge';
+import { EffectiveClassificationBadge } from '../components/common/Badge';
 import { useSampleFilter } from '../hooks/useSampleFilter';
 import { useSampleStore } from '../stores/sampleStore';
 import { useToastStore } from '../stores/uiStore';
@@ -180,10 +180,7 @@ export default function Sections() {
                         >
                           {sample.sampleNo} ↗
                         </Typography>
-                        <ClassificationBadge
-                          category={sample.category}
-                          group={sample.chemicalGroup}
-                        />
+                        <EffectiveClassificationBadge sample={sample} />
                       </Stack>
                     ) : (
                       <Alert severity="warning">关联样本已不存在</Alert>
